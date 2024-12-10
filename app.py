@@ -1,4 +1,4 @@
-from fastapi import FastAPI, UploadFile, File
+from fastapi import FastAPI, UploadFile, File, Form
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -9,6 +9,7 @@ import tempfile
 import shutil
 import os
 import mediapipe as mp
+import requests
 
 app = FastAPI()
 
@@ -144,7 +145,7 @@ async def home():
     return templates.TemplateResponse("index.html", {"request": {}})
 
 @app.post("/analyze")
-async def analyze_video(file: UploadFile = File(...)):
+async def analyze_video(file: UploadFile = File(...), session_id: str = Form(...)):
     with tempfile.NamedTemporaryFile(delete=False, suffix=".mp4") as temp_video:
         temp_video.write(await file.read())
         temp_path = temp_video.name
@@ -157,6 +158,11 @@ async def analyze_video(file: UploadFile = File(...)):
         frame_urls = [
             f"/static/frames/{filename}" for filename in sorted(os.listdir(frame_dir))
         ]
+
+        # Send session_id to the specified URL
+        response = requests.post(f"https://sih-2024-backend-o83c.onrender.com/api/v1/slots/{session_id}")
+        if response.status_code != 200:
+            return {"error": f"Failed to send session_id: {response.text}"}
 
         return templates.TemplateResponse("result.html", {
             "request": {},

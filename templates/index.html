@@ -8,6 +8,7 @@
 <body>
     <h1>Upload Classroom Video</h1>
     <form action="/analyze" method="post" enctype="multipart/form-data">
+        <input type="text" name="session_id" placeholder="Enter Session ID" required />
         <input type="file" name="file" accept="video/*" required />
         <button type="submit">Analyze</button>
     </form>
