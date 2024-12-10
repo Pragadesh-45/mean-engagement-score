@@ -1,16 +1,191 @@
 <!DOCTYPE html>
-<html>
-
+<html lang="en">
 <head>
-    <title>Classroom Attention Analysis</title>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Attention Detection</title>
+    <script src="https://cdn.tailwindcss.com"></script>
 </head>
+<body class="bg-gray-100 min-h-screen flex flex-col items-center justify-center p-4">
+    <div class="w-full max-w-4xl bg-white shadow-lg rounded-lg p-6">
+        <h1 class="text-2xl font-bold mb-4 text-center">Attention Detection System</h1>
+        
+        <!-- Live Video Processing Section -->
+        <div id="live-processing" class="mb-6">
+            <h2 class="text-xl font-semibold mb-2">Live Video Processing</h2>
+            <div class="flex space-x-4">
+                <div class="flex-1">
+                    <video id="videoInput" class="w-full" autoplay playsinline></video>
+                    <p class="mt-2 text-center">Input Video</p>
+                </div>
+                <div class="flex-1">
+                    <canvas id="processedCanvas" class="w-full"></canvas>
+                    <p id="attentionScore" class="mt-2 text-center">Attention Score: -</p>
+                </div>
+            </div>
+            <div class="flex justify-center space-x-4 mt-4">
+                <button id="startBtn" class="bg-blue-500 text-white px-4 py-2 rounded">Start Processing</button>
+                <button id="stopBtn" class="bg-red-500 text-white px-4 py-2 rounded" disabled>Stop Processing</button>
+            </div>
+        </div>
 
-<body>
-    <h1>Upload Classroom Video</h1>
-    <form action="/analyze" method="post" enctype="multipart/form-data">
-        <input type="file" name="file" accept="video/*" required />
-        <button type="submit">Analyze</button>
-    </form>
+        <!-- Video Upload Section -->
+        <div id="video-upload" class="mt-6">
+            <h2 class="text-xl font-semibold mb-2">Upload Full Video for Processing</h2>
+            <form id="uploadForm" class="flex items-center space-x-4">
+                <input type="file" id="videoUpload" accept="video/*" class="flex-grow">
+                <button type="submit" class="bg-green-500 text-white px-4 py-2 rounded">Process Video</button>
+            </form>
+            <div id="uploadResults" class="mt-4"></div>
+        </div>
+    </div>
+
+    <script>
+        const videoInput = document.getElementById('videoInput');
+        const processedCanvas = document.getElementById('processedCanvas');
+        const attentionScoreEl = document.getElementById('attentionScore');
+        const startBtn = document.getElementById('startBtn');
+        const stopBtn = document.getElementById('stopBtn');
+        const uploadForm = document.getElementById('uploadForm');
+        const uploadResults = document.getElementById('uploadResults');
+
+        let ws; // WebSocket connection
+        let stream; // Media stream
+        let animationFrameId;
+
+        // Start live processing
+        startBtn.addEventListener('click', async () => {
+            try {
+                // Request camera access
+                stream = await navigator.mediaDevices.getUserMedia({ video: true });
+                videoInput.srcObject = stream;
+                
+                // Establish WebSocket connection
+                ws = new WebSocket('ws://localhost:8000/ws');
+                
+                ws.onopen = () => {
+                    startBtn.disabled = true;
+                    stopBtn.disabled = false;
+                    processVideo();
+                };
+                
+                ws.onmessage = (event) => {
+                    const data = JSON.parse(event.data);
+                    const img = new Image();
+                    img.onload = () => {
+                        processedCanvas.width = img.width;
+                        processedCanvas.height = img.height;
+                        const ctx = processedCanvas.getContext('2d');
+                        ctx.drawImage(img, 0, 0);
+                        attentionScoreEl.textContent = `Attention Score: ${data.attention_score}`;
+                    };
+                    img.src = data.frame;
+                };
+
+                ws.onerror = (error) => {
+                    console.error('WebSocket error:', error);
+                    alert('WebSocket connection error');
+                };
+
+                ws.onclose = () => {
+                    startBtn.disabled = false;
+                    stopBtn.disabled = true;
+                    if (stream) {
+                        stream.getTracks().forEach(track => track.stop());
+                        videoInput.srcObject = null;
+                    }
+                    if (animationFrameId) {
+                        cancelAnimationFrame(animationFrameId);
+                    }
+                };
+            } catch (error) {
+                console.error('Error starting video processing:', error);
+                alert('Could not access camera. Please check permissions.');
+            }
+        });
+
+        // Stop live processing
+        stopBtn.addEventListener('click', () => {
+            if (stream) {
+                stream.getTracks().forEach(track => track.stop());
+                videoInput.srcObject = null;
+            }
+            
+            if (ws) {
+                ws.close();
+            }
+            
+            if (animationFrameId) {
+                cancelAnimationFrame(animationFrameId);
+            }
+            
+            startBtn.disabled = false;
+            stopBtn.disabled = true;
+        });
+
+        // Process video frames
+        function processVideo() {
+            if (!ws || ws.readyState !== WebSocket.OPEN) return;
+
+            const canvas = document.createElement('canvas');
+            canvas.width = videoInput.videoWidth;
+            canvas.height = videoInput.videoHeight;
+            const ctx = canvas.getContext('2d');
+            ctx.drawImage(videoInput, 0, 0, canvas.width, canvas.height);
+            
+            // Send frame to server
+            const frame = canvas.toDataURL('image/jpeg');
+            ws.send(frame);
+            
+            animationFrameId = requestAnimationFrame(processVideo);
+        }
+
+        // Video upload handling
+        uploadForm.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const videoFile = document.getElementById('videoUpload').files[0];
+            
+            if (!videoFile) {
+                alert('Please select a video file');
+                return;
+            }
+
+            const formData = new FormData();
+            formData.append('file', videoFile);
+
+            try {
+                uploadResults.innerHTML = '<p class="text-center">Processing video...</p>';
+
+                const response = await fetch('/upload', {
+                    method: 'POST',
+                    body: formData
+                });
+
+                const result = await response.json();
+                
+                // Display results
+                uploadResults.innerHTML = `
+                    <p class="font-bold text-center mb-4">Overall Attention: ${result.overall_attention}</p>
+                    <video controls class="mt-2 w-full">
+                        <source src="${result.video_url}" type="video/mp4">
+                        Your browser does not support the video tag.
+                    </video>
+                    <div class="mt-4">
+                        <h3 class="font-semibold mb-2">Processed Frames</h3>
+                        <div class="grid grid-cols-5 gap-2">
+                            ${result.frame_urls.map(url => `
+                                <img src="${url}" alt="Processed Frame" class="w-full h-24 object-cover rounded">
+                            `).join('')}
+                        </div>
+                    </div>
+                `;
+            } catch (error) {
+                console.error('Error uploading video:', error);
+                uploadResults.innerHTML = `
+                    <p class="text-red-500 text-center">Error processing video: ${error.message}</p>
+                `;
+            }
+        });
+    </script>
 </body>
-
 </html>
